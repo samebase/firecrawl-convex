@@ -1,0 +1,89 @@
+{
+  "name": "firecrawl-convex",
+  "description": "Firecrawl component for Convex: scrape, map, and search the web, and run durable crawls with reactive progress.",
+  "repository": "github:firecrawl/firecrawl-convex",
+  "homepage": "https://github.com/firecrawl/firecrawl-convex#readme",
+  "bugs": {
+    "url": "https://github.com/firecrawl/firecrawl-convex/issues"
+  },
+  "version": "0.1.0",
+  "license": "MIT",
+  "keywords": [
+    "convex",
+    "component",
+    "firecrawl",
+    "scraping",
+    "crawler",
+    "web-search",
+    "rag"
+  ],
+  "type": "module",
+  "scripts": {
+    "dev": "convex dev --start 'npm run dev:build'",
+    "dev:build": "chokidar 'tsconfig*.json' 'src/**/*.ts' -i '**/*.test.ts' -c 'npm run build:codegen' --initial",
+    "dev:mock": "node example/mock-firecrawl.mjs",
+    "predev": "convex init && npm run build:codegen",
+    "build": "tsc --project ./tsconfig.build.json",
+    "build:codegen": "npx convex codegen --component-dir ./src/component && npm run build",
+    "build:clean": "rm -rf dist *.tsbuildinfo && npm run build:codegen",
+    "typecheck": "tsc --noEmit && tsc -p example && tsc -p example/convex",
+    "lint": "eslint .",
+    "test": "vitest run --typecheck",
+    "test:watch": "vitest --typecheck --clearScreen false",
+    "test:coverage": "vitest run --coverage --coverage.reporter=text",
+    "prepare": "npm run build",
+    "preversion": "npm ci && npm run build:clean && npm run test && npm run lint && npm run typecheck",
+    "alpha": "npm version prerelease --preid alpha && npm publish --tag alpha && git push --follow-tags",
+    "release": "npm version patch && npm publish && git push --follow-tags",
+    "version": "(npm whoami || npm login) && vim -c 'normal o' -c 'normal o## '$npm_package_version CHANGELOG.md && prettier -w CHANGELOG.md && git add CHANGELOG.md"
+  },
+  "files": [
+    "dist",
+    "src"
+  ],
+  "exports": {
+    "./package.json": "./package.json",
+    ".": {
+      "types": "./dist/client/index.d.ts",
+      "default": "./dist/client/index.js"
+    },
+    "./test": "./src/test.ts",
+    "./_generated/component.js": {
+      "types": "./dist/component/_generated/component.d.ts"
+    },
+    "./_generated/component": {
+      "types": "./dist/component/_generated/component.d.ts"
+    },
+    "./convex.config.js": {
+      "types": "./dist/component/convex.config.d.ts",
+      "default": "./dist/component/convex.config.js"
+    },
+    "./convex.config": {
+      "types": "./dist/component/convex.config.d.ts",
+      "default": "./dist/component/convex.config.js"
+    }
+  },
+  "dependencies": {
+    "convex-helpers": "^0.1.122"
+  },
+  "peerDependencies": {
+    "convex": "^1.43.0"
+  },
+  "devDependencies": {
+    "@convex-dev/eslint-plugin": "^2.0.0",
+    "@edge-runtime/vm": "^5.0.0",
+    "@eslint/js": "9.39.4",
+    "@types/node": "^24.12.2",
+    "chokidar-cli": "3.0.0",
+    "convex": "1.43.0",
+    "convex-test": "0.0.55",
+    "eslint": "9.39.4",
+    "globals": "^17.5.0",
+    "prettier": "3.8.3",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.58.2",
+    "vitest": "4.1.4"
+  },
+  "types": "./dist/client/index.d.ts",
+  "module": "./dist/client/index.js"
+}
