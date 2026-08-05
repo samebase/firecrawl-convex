@@ -27,6 +27,8 @@ jobs:
 
       - name: Install and build
         run: |
+          # npm 11.4.x trips an arborist bug on this peer graph.
+          npm i -g npm@">=11.19.0"
           npm i
           npm run build
       - name: Publish package for testing branch
