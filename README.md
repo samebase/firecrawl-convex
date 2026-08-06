@@ -86,7 +86,9 @@ Get a key at [firecrawl.dev](https://firecrawl.dev).
 
 Call the component from your own actions. Keeping a wrapper in your app is where
 authentication, authorization, and rate limiting belong — components can't see
-`ctx.auth`.
+`ctx.auth`. The [example app](example/convex/example.ts) shows the full pattern:
+a `requireUser` gate on every paid endpoint, and an app-owned crawl → user table
+checked before any crawl can be read, cancelled, or deleted.
 
 ```ts
 // convex/web.ts
@@ -124,12 +126,21 @@ export const searchWeb = action({
 });
 ```
 
-Options mirror the [Firecrawl v2 API](https://docs.firecrawl.dev/api-reference/v2-introduction)
-field for field. Anything this version doesn't model yet goes through `extra`:
+Option names match the [Firecrawl v2 API](https://docs.firecrawl.dev/api-reference/v2-introduction)
+and are passed through untouched, so the Firecrawl docs are the reference for
+what they do. The typed surface covers the common options; a few enterprise and
+niche ones (`profile`, `threatProtection`, `auditMetadata`, search `enterprise`)
+are deliberately left out of the types. Those, and anything Firecrawl ships
+before this package catches up, go through `extra`:
 
 ```ts
-await firecrawl.scrape(ctx, url, { extra: { someBrandNewOption: true } });
+await firecrawl.scrape(ctx, url, { extra: { threatProtection: { mode: "off" } } });
 ```
+
+`scrape`, `map`, and `search` return the API response as-is (validated as
+`v.any()` at the component boundary) rather than a re-modelled shape, so a new
+response field is available the day Firecrawl ships it. The `FirecrawlClient`
+methods give you TypeScript types over those responses.
 
 ## Durable crawls
 
@@ -198,11 +209,13 @@ export const onCrawlComplete = internalMutation({
     jobId: v.optional(v.string()),
     status: v.union(v.literal("completed"), v.literal("failed"), v.literal("cancelled")),
     pageCount: v.number(),
+    unstored: v.optional(v.number()),
     error: v.optional(v.string()),
     context: v.optional(v.any()),
   },
   handler: async (ctx, args) => {
     if (args.status !== "completed") return;
+    if (args.unstored) console.warn(`${args.unstored} pages were too large to store`);
     // e.g. hand the pages to an embedding pipeline
     await ctx.scheduler.runAfter(0, internal.rag.indexCrawl, {
       crawlId: args.crawlId,
@@ -241,7 +254,14 @@ await firecrawl.listCrawls(ctx, { status: "scraping", limit: 20 });
 await firecrawl.getPage(ctx, { crawlId, url });
 await firecrawl.cancelCrawl(ctx, crawlId);         // action
 await firecrawl.deleteCrawl(ctx, crawlId);         // mutation: crawl + its pages
+await firecrawl.resumeCrawl(ctx, crawlId);         // mutation: see below
 ```
+
+The component stops checking on a crawl after ~250 status checks (roughly two
+hours of polling, or a day of webhook watchdog) and finalizes it as `failed`
+with an explanatory error, so subscribers and `onComplete` are never left
+waiting on a job that will never report. If the job really is still running on
+Firecrawl, `resumeCrawl` picks tracking back up where it left off.
 
 Pass `storeContent: false` to `startCrawl` to record only URLs and metadata —
 useful when you just want the callback, or when you re-fetch content elsewhere.
@@ -252,10 +272,14 @@ useful when you just want the callback, or when you re-fetch content elsewhere.
   you can branch on `error.data.status === 402` (out of credits) or
   `429` (rate limited). Transient failures (408, 425, 429, 5xx) are retried
   three times with backoff, honoring `Retry-After`.
-- **Document limits.** Convex documents cap at 1MB. Page text over ~200k
-  characters is truncated and a screenshot too large to fit is dropped; either
-  way the page is flagged `truncated: true`. For very large corpora, consider
-  `storeContent: false` plus your own storage.
+- **Document limits.** Convex documents cap at 1MB, so every page is budgeted
+  in UTF-8 bytes across the whole document before it's written. Text and link
+  lists are truncated; a screenshot, extracted `json`, or `changeTracking` blob
+  that doesn't fit is dropped whole; oversized `metadata` falls back to its
+  essential keys. Any of that sets `truncated: true` on the page. If Firecrawl
+  returns pages that still can't be stored, the count shows up as `unstored` on
+  the crawl and in the `onComplete` payload — never silently. For very large
+  corpora, consider `storeContent: false` plus your own storage.
 - **Credits** show up as `creditsUsed` on the crawl row and in each page's
   `metadata`.
 - **Self-hosted Firecrawl:** declare `FIRECRAWL_API_URL` in the component env
@@ -305,8 +329,9 @@ npx convex env set FIRECRAWL_WEBHOOK_SECRET whsec-mock
 npm run dev
 
 # terminal 3
+npx convex env set DEMO_ALLOW_ANONYMOUS true   # local CLI demo only
 npx convex run example:startCrawl '{"url":"https://mock.test","limit":3}'
-npx convex run example:recentCrawls '{}'
+npx convex run example:myCrawls '{}'
 npx convex run example:reports '{}'
 ```
 

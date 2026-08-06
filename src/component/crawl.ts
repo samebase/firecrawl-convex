@@ -31,9 +31,13 @@ const MAX_POLL_ATTEMPTS = 250;
 /** Documents per ingest mutation, to stay well inside argument size limits. */
 const INGEST_BATCH = 10;
 
-/** Content limits, to stay inside Convex's 1MB per-document limit. */
-const MAX_FIELD_CHARS = 200_000;
-const MAX_DOC_CHARS = 700_000;
+/**
+ * Content limits, in UTF-8 bytes, to stay inside Convex's 1MB per-document
+ * limit with room to spare for system fields and index entries.
+ */
+const MAX_DOC_BYTES = 900_000;
+/** No single field may take more than this much of the document budget. */
+const MAX_FIELD_BYTES = 400_000;
 
 /** Pages deleted per transaction by `deleteCrawl`. */
 const DELETE_BATCH = 200;
@@ -59,6 +63,7 @@ const publicCrawlDoc = v.object({
   completed: v.optional(v.number()),
   pageCount: v.number(),
   creditsUsed: v.optional(v.number()),
+  unstored: v.optional(v.number()),
   error: v.optional(v.string()),
   context: v.optional(v.any()),
   finalized: v.boolean(),
@@ -88,6 +93,8 @@ export type CrawlCompletePayload = {
   jobId?: string;
   status: "completed" | "failed" | "cancelled";
   pageCount: number;
+  /** Pages Firecrawl returned that could not be stored, if any. */
+  unstored?: number;
   error?: string;
   context?: any;
 };
@@ -172,39 +179,157 @@ type PageFields = {
   truncated: boolean;
 };
 
+const encoder = new TextEncoder();
+const decoder = new TextDecoder();
+
+/** Serialized size in bytes — what Convex actually measures against its limit. */
+function jsonBytes(value: unknown): number {
+  const json = JSON.stringify(value);
+  return json === undefined ? 0 : encoder.encode(json).length;
+}
+
+/** Cut a string to a byte budget without splitting a UTF-8 code point. */
+export function truncateToBytes(value: string, maxBytes: number): string {
+  if (maxBytes <= 0) return "";
+  const bytes = encoder.encode(value);
+  if (bytes.length <= maxBytes) return value;
+  let end = maxBytes;
+  // Continuation bytes are 10xxxxxx; walk back to the start of a character.
+  while (end > 0 && (bytes[end] & 0b1100_0000) === 0b1000_0000) end--;
+  return decoder.decode(bytes.subarray(0, end));
+}
+
+/** Largest prefix of `value` whose *JSON* form fits, escaping included. */
+function fitString(value: string, maxBytes: number): string {
+  if (maxBytes <= 2) return "";
+  let target = maxBytes - 2; // the surrounding quotes
+  let cut = truncateToBytes(value, target);
+  // Escaping (\n, \", …) can push the encoded form back over budget. Shrink by
+  // exactly the overflow rather than a percentage, so a two-byte overshoot
+  // doesn't cost the caller a chunk of their content.
+  for (let attempt = 0; attempt < 8; attempt++) {
+    const overflow = jsonBytes(cut) - maxBytes;
+    if (overflow <= 0) return cut;
+    target -= Math.max(overflow, 1);
+    if (target <= 0) return "";
+    cut = truncateToBytes(value, target);
+  }
+  return jsonBytes(cut) <= maxBytes ? cut : "";
+}
+
+/** As many leading entries as fit the budget. */
+function fitArray(values: string[], maxBytes: number): string[] {
+  const kept: string[] = [];
+  let used = 2; // []
+  for (const value of values) {
+    const cost = jsonBytes(value) + 1; // entry plus its comma
+    if (used + cost > maxBytes) break;
+    kept.push(value);
+    used += cost;
+  }
+  return kept;
+}
+
+/** Metadata worth keeping when the whole object won't fit. */
+const ESSENTIAL_METADATA = [
+  "url",
+  "sourceURL",
+  "title",
+  "description",
+  "statusCode",
+  "contentType",
+  "creditsUsed",
+  "cacheState",
+  "error",
+];
+
+function essentialMetadata(metadata: any): any {
+  if (!metadata || typeof metadata !== "object") return metadata;
+  const kept: Record<string, unknown> = {};
+  for (const key of ESSENTIAL_METADATA) {
+    if (metadata[key] !== undefined) kept[key] = metadata[key];
+  }
+  return kept;
+}
+
 /**
- * Cut oversized content down so the page document fits Convex's 1MB limit.
- * Text fields are truncated in priority order; a screenshot is all-or-nothing
- * because a sliced base64 string is useless.
+ * Fit a page inside Convex's 1MB document limit.
+ *
+ * Every variable-sized field is budgeted in UTF-8 bytes against the whole
+ * serialized document — a character count would undercount by 3x on CJK text,
+ * and leaving `metadata`, `json`, `changeTracking`, or `links` unbudgeted lets
+ * a single fat `changeTracking` diff blow the limit on its own.
+ *
+ * Fields are taken in order of usefulness. Text and link lists are truncated;
+ * a screenshot, extracted `json`, or `changeTracking` is all-or-nothing,
+ * because half a base64 image or half an object is worse than none.
  */
 export function clampContent(fields: PageFields): PageFields {
-  const clamped = { ...fields };
-  let budget = MAX_DOC_CHARS;
+  const clamped: PageFields = { url: fields.url, truncated: fields.truncated };
+  // Reserve room for the fields every page carries, plus Convex's own.
+  let budget =
+    MAX_DOC_BYTES -
+    jsonBytes({
+      url: fields.url,
+      crawlId: "x".repeat(32),
+      scrapedAt: 0,
+      truncated: false,
+      _id: "x".repeat(32),
+      _creationTime: 0,
+    });
 
-  if (typeof clamped.screenshot === "string") {
-    if (clamped.screenshot.length > MAX_FIELD_CHARS) {
-      delete clamped.screenshot;
+  if (fields.metadata !== undefined) {
+    let metadata = fields.metadata;
+    let cost = jsonBytes(metadata);
+    if (cost > Math.min(MAX_FIELD_BYTES, budget)) {
+      metadata = essentialMetadata(metadata);
+      cost = jsonBytes(metadata);
       clamped.truncated = true;
+    }
+    if (cost <= budget) {
+      clamped.metadata = metadata;
+      budget -= cost;
     } else {
-      budget -= clamped.screenshot.length;
+      clamped.truncated = true;
     }
   }
 
-  for (const key of ["markdown", "summary", "html", "rawHtml"] as const) {
-    const value = clamped[key];
-    if (typeof value !== "string") continue;
-    const allowance = Math.min(MAX_FIELD_CHARS, Math.max(budget, 0));
-    if (value.length > allowance) {
-      clamped.truncated = true;
-      if (allowance === 0) {
-        delete clamped[key];
-        continue;
-      }
-      clamped[key] = value.slice(0, allowance);
-      budget -= allowance;
-    } else {
-      budget -= value.length;
+  for (const key of [
+    "markdown",
+    "summary",
+    "json",
+    "links",
+    "changeTracking",
+    "html",
+    "rawHtml",
+    "screenshot",
+  ] as const) {
+    const value = fields[key];
+    if (value === undefined) continue;
+
+    const allowance = Math.min(MAX_FIELD_BYTES, Math.max(budget, 0));
+    const cost = jsonBytes(value);
+    if (cost <= allowance) {
+      (clamped as any)[key] = value;
+      budget -= cost;
+      continue;
     }
+
+    clamped.truncated = true;
+    if (key === "markdown" || key === "summary" || key === "html" || key === "rawHtml") {
+      const cut = fitString(value as string, allowance);
+      if (cut.length > 0) {
+        (clamped as any)[key] = cut;
+        budget -= jsonBytes(cut);
+      }
+    } else if (key === "links") {
+      const kept = fitArray(value as string[], allowance);
+      if (kept.length > 0) {
+        clamped.links = kept;
+        budget -= jsonBytes(kept);
+      }
+    }
+    // screenshot / json / changeTracking are dropped rather than sliced.
   }
 
   return clamped;
@@ -220,7 +345,9 @@ export function toPageFields(
   if (typeof url !== "string" || url.length === 0) return null;
 
   const fields: PageFields = { url, metadata, truncated: false };
-  if (!storeContent) return fields;
+  // Even a metadata-only page needs clamping: metadata is caller-supplied and
+  // unbounded.
+  if (!storeContent) return clampContent(fields);
 
   if (typeof document.markdown === "string") fields.markdown = document.markdown;
   if (typeof document.html === "string") fields.html = document.html;
@@ -442,6 +569,34 @@ export const cancel = action({
 });
 
 /**
+ * Start tracking a crawl again after the component gave up on it — either
+ * because it exhausted its status checks or because you cancelled locally
+ * while Firecrawl kept going. No-op for a crawl that genuinely completed.
+ */
+export const resume = mutation({
+  args: { crawlId: v.string() },
+  returns: v.boolean(),
+  handler: async (ctx, args): Promise<boolean> => {
+    const crawl = await ctx.db.get("crawls", requireId(ctx, args.crawlId));
+    if (!crawl || !crawl.jobId) return false;
+    if (crawl.status === "completed") return false;
+
+    await ctx.db.patch("crawls", crawl._id, {
+      status: "scraping",
+      finalized: false,
+      completedAt: undefined,
+      error: undefined,
+      pollAttempt: 0,
+      updatedAt: now(),
+    });
+    await ctx.scheduler.runAfter(0, internal.crawl.poll, {
+      crawlId: crawl._id,
+    });
+    return true;
+  },
+});
+
+/**
  * Delete a crawl and its pages. Large crawls are deleted across several
  * scheduled transactions.
  */
@@ -597,6 +752,8 @@ export const advance = internalMutation({
     completed: v.optional(v.number()),
     creditsUsed: v.optional(v.number()),
     nextUrl: v.optional(v.string()),
+    /** Pages this pass couldn't store, e.g. an oversized document. */
+    unstored: v.optional(v.number()),
   },
   returns: v.null(),
   handler: async (ctx, args): Promise<null> => {
@@ -604,6 +761,7 @@ export const advance = internalMutation({
     if (!crawl || crawl.finalized) return null;
 
     const pollAttempt = crawl.pollAttempt + 1;
+    const unstored = (crawl.unstored ?? 0) + (args.unstored ?? 0);
     await ctx.db.patch("crawls", args.crawlId, {
       status: args.status,
       total: args.total ?? crawl.total,
@@ -611,6 +769,7 @@ export const advance = internalMutation({
       creditsUsed: args.creditsUsed ?? crawl.creditsUsed,
       nextUrl: args.nextUrl,
       pollAttempt,
+      unstored: unstored > 0 ? unstored : undefined,
       updatedAt: now(),
     });
 
@@ -628,9 +787,14 @@ export const advance = internalMutation({
     }
 
     if (pollAttempt >= MAX_POLL_ATTEMPTS) {
-      await ctx.db.patch("crawls", args.crawlId, {
-        error: `Stopped tracking after ${MAX_POLL_ATTEMPTS} status checks; the crawl may still be running on Firecrawl.`,
-      });
+      // Terminal, so subscribers and `onComplete` aren't left waiting forever.
+      // The job may well still be running on Firecrawl, hence `resume`.
+      await finalizeCrawl(
+        ctx,
+        args.crawlId,
+        "failed",
+        `Stopped tracking after ${MAX_POLL_ATTEMPTS} status checks. The crawl may still be running on Firecrawl — call resume({ crawlId }) to pick tracking back up.`,
+      );
       return null;
     }
 
@@ -698,15 +862,28 @@ export const poll = internalAction({
       return null;
     }
 
+    // A batch that fails to store must not take the poll chain down with it:
+    // this runs in a scheduled action, so an uncaught throw here would leave
+    // the crawl stuck in `scraping` with nothing scheduled to revive it.
     const documents: any[] = Array.isArray(body.data) ? body.data : [];
+    let unstored = 0;
     for (let i = 0; i < documents.length; i += INGEST_BATCH) {
-      await ctx.runMutation(internal.crawl.ingestPages, {
-        crawlId: args.crawlId,
-        documents: documents.slice(i, i + INGEST_BATCH),
-      });
+      const batch = documents.slice(i, i + INGEST_BATCH);
+      try {
+        await ctx.runMutation(internal.crawl.ingestPages, {
+          crawlId: args.crawlId,
+          documents: batch,
+        });
+      } catch (error) {
+        unstored += batch.length;
+        console.error(
+          `firecrawl: could not store ${batch.length} page(s) of crawl ${args.crawlId}: ${messageOf(error)}`,
+        );
+      }
     }
 
     await ctx.runMutation(internal.crawl.advance, {
+      unstored,
       crawlId: args.crawlId,
       status: normalizeStatus(body.status),
       total: typeof body.total === "number" ? body.total : undefined,
@@ -844,9 +1021,16 @@ async function finalizeCrawl(
     jobId: crawl.jobId,
     status,
     pageCount: crawl.pageCount,
+    unstored: crawl.unstored,
     error: error ?? crawl.error,
     context: crawl.context,
   });
 }
 
-export const _test = { clampContent, toPageFields, nextDelayMs, normalizeStatus };
+export const _test = {
+  clampContent,
+  toPageFields,
+  nextDelayMs,
+  normalizeStatus,
+  truncateToBytes,
+};

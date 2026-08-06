@@ -3,6 +3,11 @@
 A Convex app that installs the component and exercises everything it exposes:
 `scrape`, `map`, `search`, and a durable crawl with a completion callback.
 
+Every function requires a signed-in caller, and crawls are owned: the app keeps
+its own `crawlOwners` table and checks it before any crawl can be read,
+cancelled, resumed, or deleted. The component can't do this for you — it never
+sees `ctx.auth`.
+
 The functions live in [`convex/example.ts`](convex/example.ts); the component is
 installed in [`convex/convex.config.ts`](convex/convex.config.ts).
 
@@ -24,6 +29,9 @@ FIRECRAWL_WEBHOOK_SECRET=whsec-mock npm run dev:mock
 npx convex env set FIRECRAWL_API_KEY fc-mock-key
 npx convex env set FIRECRAWL_API_URL http://127.0.0.1:4242
 npx convex env set FIRECRAWL_WEBHOOK_SECRET whsec-mock
+# The CLI calls functions unauthenticated; this lets the walkthrough run.
+# Local deployments only — never set this on anything internet-reachable.
+npx convex env set DEMO_ALLOW_ANONYMOUS true
 npm run dev
 ```
 
@@ -53,12 +61,13 @@ npx convex run example:startCrawl '{"url":"https://docs.firecrawl.dev","limit":5
 npx convex run example:crawlProgress '{"crawlId":"<crawlId>"}'
 npx convex run example:crawlPages '{"crawlId":"<crawlId>","paginationOpts":{"numItems":10,"cursor":null}}'
 
-# every crawl, and the rows written by the onComplete callback
-npx convex run example:recentCrawls '{}'
+# your crawls, and the rows written by the onComplete callback
+npx convex run example:myCrawls '{}'
 npx convex run example:reports '{}'
 
 # housekeeping
 npx convex run example:cancelCrawl '{"crawlId":"<crawlId>"}'
+npx convex run example:resumeCrawl '{"crawlId":"<crawlId>"}'
 npx convex run example:deleteCrawl '{"crawlId":"<crawlId>"}'
 ```
 
@@ -66,5 +75,7 @@ npx convex run example:deleteCrawl '{"crawlId":"<crawlId>"}'
 
 [`convex/example.test.ts`](convex/example.test.ts) shows how an app tests code
 that calls the component: register it with `firecrawl-convex/test`, stub `fetch`,
-and drive the scheduler with `finishAllScheduledFunctions`. Run from the repo
+sign in with `t.withIdentity(...)`, and drive the scheduler with
+`finishAllScheduledFunctions`. It also covers the authorization rules — anonymous
+callers rejected, one user unable to touch another's crawl. Run from the repo
 root with `npm test`.

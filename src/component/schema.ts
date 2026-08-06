@@ -29,6 +29,12 @@ export default defineSchema({
     /** Pages we have stored locally. */
     pageCount: v.number(),
     creditsUsed: v.optional(v.number()),
+    /**
+     * Pages Firecrawl returned that we could not store, e.g. a document that
+     * stayed over Convex's 1MB limit even after clamping. Surfaced to the app
+     * so lost content is never silent.
+     */
+    unstored: v.optional(v.number()),
     error: v.optional(v.string()),
     /** Cursor into the result stream, from the `next` field of a status response. */
     nextUrl: v.optional(v.string()),

@@ -18,15 +18,17 @@ export function initConvexTest() {
 }
 
 export function mockFetch(bodies: unknown[]) {
+  const calls: string[] = [];
   vi.stubGlobal(
     "fetch",
-    vi.fn(
-      async () =>
-        new Response(JSON.stringify(bodies.shift() ?? { success: true }), {
-          status: 200,
-        }),
-    ),
+    vi.fn(async (url: string | URL) => {
+      calls.push(String(url));
+      return new Response(JSON.stringify(bodies.shift() ?? { success: true }), {
+        status: 200,
+      });
+    }),
   );
+  return calls;
 }
 
 test("setup", () => {});

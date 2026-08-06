@@ -20,13 +20,16 @@ const PORT = Number(process.env.PORT ?? 4242);
 const WEBHOOK_SECRET = process.env.FIRECRAWL_WEBHOOK_SECRET;
 /** Pages the fake crawler "discovers". */
 const PAGE_COUNT = Number(process.env.MOCK_PAGE_COUNT ?? 3);
+/** Pad page markdown to this many bytes, to exercise the document-size guard. */
+const PAGE_BYTES = Number(process.env.MOCK_PAGE_BYTES ?? 0);
 
 const crawls = new Map();
 
 function pageDocument(base, index) {
   const url = `${base.replace(/\/$/, "")}/page-${index}`;
+  const body = `# Page ${index}\n\nMock content for ${url}.`;
   return {
-    markdown: `# Page ${index}\n\nMock content for ${url}.`,
+    markdown: PAGE_BYTES > body.length ? body + "x".repeat(PAGE_BYTES - body.length) : body,
     metadata: {
       url,
       sourceURL: url,

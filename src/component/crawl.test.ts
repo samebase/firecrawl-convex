@@ -321,6 +321,102 @@ describe("housekeeping", () => {
     expect(page!.markdown).toBe("# take 1");
   });
 
+  test("an oversized page is stored clamped, and the crawl still finishes", async () => {
+    const t = initConvexTest();
+    // 3MB of markdown: without clamping this document could not be written.
+    // (convex-test doesn't enforce Convex's 1MB limit, so this asserts the
+    // stored size directly rather than relying on the harness to reject it.)
+    const huge = {
+      markdown: "m".repeat(3_000_000),
+      metadata: { url: "https://a.com/huge" },
+    };
+    mockFetch([startResponse, statusResponse({ data: [huge] })]);
+
+    const { crawlId } = await t.action(api.crawl.start, {
+      url: "https://a.com",
+      mode: "poll",
+    });
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+    const page = await t.query(api.crawl.getPage, {
+      crawlId,
+      url: "https://a.com/huge",
+    });
+    expect(page!.truncated).toBe(true);
+    expect(
+      new TextEncoder().encode(JSON.stringify(page)).length,
+    ).toBeLessThan(1_000_000);
+    expect(page!.markdown!.length).toBeGreaterThan(0);
+    expect(await t.query(api.crawl.get, { crawlId })).toMatchObject({
+      status: "completed",
+      finalized: true,
+    });
+  });
+
+  test("stops tracking terminally instead of hanging in `scraping`", async () => {
+    const t = initConvexTest();
+    mockFetch([startResponse]);
+    const { crawlId } = await t.action(api.crawl.start, {
+      url: "https://a.com",
+      mode: "poll",
+    });
+
+    // Jump to the attempt ceiling, then let one more status check land.
+    await t.run(async (ctx: any) => {
+      const id = ctx.db.normalizeId("crawls", crawlId);
+      await ctx.db.patch("crawls", id, { pollAttempt: 249 });
+    });
+    await t.mutation(internal.crawl.advance, {
+      crawlId: crawlId as Id<"crawls">,
+      status: "scraping",
+    });
+
+    const crawl = await t.query(api.crawl.get, { crawlId });
+    expect(crawl).toMatchObject({ status: "failed", finalized: true });
+    expect(crawl!.error).toMatch(/resume/);
+  });
+
+  test("resume picks tracking back up after giving up", async () => {
+    const t = initConvexTest();
+    mockFetch([
+      startResponse,
+      statusResponse({ status: "scraping", data: [] }),
+      statusResponse(),
+    ]);
+    const { crawlId } = await t.action(api.crawl.start, {
+      url: "https://a.com",
+      mode: "poll",
+    });
+    await t.run(async (ctx: any) => {
+      const id = ctx.db.normalizeId("crawls", crawlId);
+      await ctx.db.patch("crawls", id, { pollAttempt: 249 });
+    });
+    await t.mutation(internal.crawl.advance, {
+      crawlId: crawlId as Id<"crawls">,
+      status: "scraping",
+    });
+    expect((await t.query(api.crawl.get, { crawlId }))!.finalized).toBe(true);
+
+    expect(await t.mutation(api.crawl.resume, { crawlId })).toBe(true);
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+    const crawl = await t.query(api.crawl.get, { crawlId });
+    expect(crawl).toMatchObject({ status: "completed", finalized: true });
+    expect(crawl!.error).toBeUndefined();
+  });
+
+  test("resume is a no-op for a crawl that genuinely completed", async () => {
+    const t = initConvexTest();
+    mockFetch([startResponse, statusResponse()]);
+    const { crawlId } = await t.action(api.crawl.start, {
+      url: "https://a.com",
+      mode: "poll",
+    });
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+    expect(await t.mutation(api.crawl.resume, { crawlId })).toBe(false);
+  });
+
   test("cancel tells Firecrawl and finalizes locally", async () => {
     const t = initConvexTest();
     const { calls } = mockFetch([startResponse, { body: { success: true } }]);
@@ -381,15 +477,84 @@ describe("content handling", () => {
     expect(_test.toPageFields({ metadata: {} }, true)).toBeNull();
   });
 
+  const docBytes = (value: unknown) =>
+    new TextEncoder().encode(JSON.stringify(value)).length;
+
+  test("keeps the whole document under Convex's 1MB limit", () => {
+    const clamped = _test.clampContent({
+      url: "https://a.com",
+      markdown: "m".repeat(800_000),
+      html: "h".repeat(800_000),
+      rawHtml: "r".repeat(800_000),
+      summary: "s".repeat(300_000),
+      screenshot: "i".repeat(800_000),
+      links: Array.from({ length: 50_000 }, (_, i) => `https://a.com/${i}`),
+      json: { blob: "j".repeat(500_000) },
+      changeTracking: { diff: { text: "d".repeat(900_000) } },
+      metadata: { url: "https://a.com", junk: "x".repeat(900_000) },
+      truncated: false,
+    });
+    expect(docBytes(clamped)).toBeLessThan(1_000_000);
+    expect(clamped.truncated).toBe(true);
+    // The identifying bits survive even when everything else is cut.
+    expect(clamped.url).toBe("https://a.com");
+    expect(clamped.metadata.url).toBe("https://a.com");
+  });
+
+  test("budgets in UTF-8 bytes, not characters", () => {
+    const clamped = _test.clampContent({
+      url: "https://a.com",
+      // 3 bytes per character: a character budget would undercount by 3x.
+      markdown: "字".repeat(700_000),
+      html: "字".repeat(700_000),
+      truncated: false,
+    });
+    expect(docBytes(clamped)).toBeLessThan(1_000_000);
+    expect(clamped.truncated).toBe(true);
+  });
+
+  test("never splits a multi-byte character", () => {
+    const cut = _test.truncateToBytes("字".repeat(100), 10);
+    expect(cut).toBe("字".repeat(3)); // 9 bytes; a 4th would need 12
+    expect(new TextEncoder().encode(cut).length).toBeLessThanOrEqual(10);
+    expect(cut).not.toContain("\uFFFD");
+  });
+
+  test("a fat changeTracking diff alone cannot blow the limit", () => {
+    const clamped = _test.toPageFields(
+      {
+        markdown: "# small page",
+        metadata: { url: "https://a.com" },
+        changeTracking: { diff: { text: "d".repeat(2_000_000) } },
+      },
+      true,
+    )!;
+    expect(docBytes(clamped)).toBeLessThan(1_000_000);
+    expect(clamped.truncated).toBe(true);
+    expect(clamped.markdown).toBe("# small page");
+    // All-or-nothing: half a diff object would be worse than none.
+    expect(clamped.changeTracking).toBeUndefined();
+  });
+
+  test("clamps metadata-only pages too", () => {
+    const clamped = _test.toPageFields(
+      { metadata: { url: "https://a.com", junk: "x".repeat(2_000_000) } },
+      false,
+    )!;
+    expect(docBytes(clamped)).toBeLessThan(1_000_000);
+    expect(clamped.truncated).toBe(true);
+    expect(clamped.metadata.url).toBe("https://a.com");
+  });
+
   test("truncates oversized text and drops oversized screenshots", () => {
     const clamped = _test.clampContent({
       url: "https://a.com",
-      markdown: "m".repeat(300_000),
-      screenshot: "s".repeat(300_000),
+      markdown: "m".repeat(600_000),
+      screenshot: "s".repeat(600_000),
       truncated: false,
     });
     expect(clamped.truncated).toBe(true);
-    expect(clamped.markdown!.length).toBe(200_000);
+    expect(clamped.markdown!.length).toBeLessThan(600_000);
     expect(clamped.screenshot).toBeUndefined();
   });
 
@@ -411,5 +576,29 @@ describe("content handling", () => {
     expect(_test.nextDelayMs("webhook", 0)).toBe(30_000);
     expect(_test.nextDelayMs("poll", 20)).toBe(30_000);
     expect(_test.nextDelayMs("webhook", 20)).toBe(300_000);
+  });
+});
+
+describe("truncation efficiency", () => {
+  test("keeps nearly the whole allowance despite JSON escaping", () => {
+    // Newlines escape to two bytes each; a coarse backoff would throw away far
+    // more content than the overflow requires.
+    const value = "line\n".repeat(200_000);
+    const clamped = _test.clampContent({
+      url: "https://a.com",
+      markdown: value,
+      truncated: false,
+    });
+    // Newline-heavy text inflates ~20% as JSON, so the raw byte count is
+    // necessarily below the budget. What matters is that we *use* the budget:
+    // a coarse percentage backoff would land far short of it.
+    const usedOfBudget = new TextEncoder().encode(
+      JSON.stringify(clamped.markdown),
+    ).length;
+    expect(usedOfBudget).toBeGreaterThan(0.9 * 400_000);
+    expect(usedOfBudget).toBeLessThanOrEqual(400_000);
+    expect(
+      new TextEncoder().encode(JSON.stringify(clamped)).length,
+    ).toBeLessThan(1_000_000);
   });
 });

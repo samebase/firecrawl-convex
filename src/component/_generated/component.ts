@@ -58,6 +58,7 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           status: "scraping" | "completed" | "failed" | "cancelled";
           storeContent: boolean;
           total?: number;
+          unstored?: number;
           updatedAt: number;
           url: string;
         },
@@ -83,6 +84,7 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           status: "scraping" | "completed" | "failed" | "cancelled";
           storeContent: boolean;
           total?: number;
+          unstored?: number;
           updatedAt: number;
           url: string;
         },
@@ -134,6 +136,7 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           status: "scraping" | "completed" | "failed" | "cancelled";
           storeContent: boolean;
           total?: number;
+          unstored?: number;
           updatedAt: number;
           url: string;
         }>,
@@ -176,6 +179,13 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           pageStatus?: string | null;
           splitCursor?: string | null;
         },
+        Name
+      >;
+      resume: FunctionReference<
+        "mutation",
+        "internal",
+        { crawlId: string },
+        boolean,
         Name
       >;
       start: FunctionReference<

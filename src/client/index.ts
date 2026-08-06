@@ -196,6 +196,8 @@ export type Crawl = {
   /** Pages stored in Convex. */
   pageCount: number;
   creditsUsed?: number;
+  /** Pages Firecrawl returned that could not be stored (e.g. over 1MB). */
+  unstored?: number;
   error?: string;
   context?: unknown;
   finalized: boolean;
@@ -229,6 +231,8 @@ export type CrawlCompletePayload = {
   jobId?: string;
   status: "completed" | "failed" | "cancelled";
   pageCount: number;
+  /** Pages Firecrawl returned that could not be stored (e.g. over 1MB). */
+  unstored?: number;
   error?: string;
   context?: any;
 };
@@ -375,6 +379,14 @@ export class FirecrawlClient {
   /** Delete a crawl and its stored pages. */
   async deleteCrawl(ctx: MutationCtx, crawlId: string): Promise<null> {
     return await ctx.runMutation(this.component.crawl.deleteCrawl, { crawlId });
+  }
+
+  /**
+   * Resume tracking a crawl the component gave up on (it stops after ~250
+   * status checks). Returns false if there was nothing to resume.
+   */
+  async resumeCrawl(ctx: MutationCtx, crawlId: string): Promise<boolean> {
+    return await ctx.runMutation(this.component.crawl.resume, { crawlId });
   }
 }
 
