@@ -1,6 +1,6 @@
 import { defineApp } from "convex/server";
 import { v } from "convex/values";
-import firecrawl from "firecrawl-convex/convex.config";
+import firecrawl from "@firecrawl/firecrawl-convex/convex.config";
 
 const app = defineApp({
   env: {

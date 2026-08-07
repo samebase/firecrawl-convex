@@ -1,6 +1,6 @@
 import { v } from "convex/values";
 import { paginationOptsValidator } from "convex/server";
-import { FirecrawlClient } from "firecrawl-convex";
+import { FirecrawlClient } from "@firecrawl/firecrawl-convex";
 import {
   action,
   internalMutation,

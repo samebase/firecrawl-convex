@@ -1,13 +1,7 @@
 {
-  "name": "firecrawl-convex",
+  "name": "@firecrawl/firecrawl-convex",
+  "version": "0.1.1",
   "description": "Firecrawl component for Convex: scrape, map, and search the web, and run durable crawls with reactive progress.",
-  "repository": "github:firecrawl/firecrawl-convex",
-  "homepage": "https://github.com/firecrawl/firecrawl-convex#readme",
-  "bugs": {
-    "url": "https://github.com/firecrawl/firecrawl-convex/issues"
-  },
-  "version": "0.1.0",
-  "license": "MIT",
   "keywords": [
     "convex",
     "component",
@@ -17,33 +11,16 @@
     "web-search",
     "rag"
   ],
-  "type": "module",
-  "scripts": {
-    "dev": "convex dev --start 'npm run dev:build'",
-    "dev:build": "chokidar 'tsconfig*.json' 'src/**/*.ts' -i '**/*.test.ts' -c 'npm run build:codegen' --initial",
-    "dev:mock": "node example/mock-firecrawl.mjs",
-    "predev": "convex init && npm run build:codegen",
-    "clean": "rm -rf dist *.tsbuildinfo",
-    "build": "tsc --project ./tsconfig.build.json",
-    "build:codegen": "npx convex codegen --component-dir ./src/component && npm run build",
-    "build:clean": "npm run clean && npm run build:codegen",
-    "typecheck": "tsc --noEmit && tsc -p example && tsc -p example/convex",
-    "lint": "eslint .",
-    "test": "vitest run --typecheck",
-    "test:watch": "vitest --typecheck --clearScreen false",
-    "test:coverage": "vitest run --coverage --coverage.reporter=text",
-    "prepare": "npm run build",
-    "preversion": "npm ci && npm run build:clean && npm run test && npm run lint && npm run typecheck",
-    "alpha": "npm version prerelease --preid alpha && npm publish --tag alpha && git push --follow-tags",
-    "release": "npm version patch && npm publish && git push --follow-tags",
-    "version": "(npm whoami || npm login) && vim -c 'normal o' -c 'normal o## '$npm_package_version CHANGELOG.md && prettier -w CHANGELOG.md && git add CHANGELOG.md",
-    "prepublishOnly": "npm run clean && npm run build",
-    "verify": "npm run build && npm run test && npm run typecheck && npm run lint"
+  "homepage": "https://github.com/firecrawl/firecrawl-convex#readme",
+  "bugs": {
+    "url": "https://github.com/firecrawl/firecrawl-convex/issues"
   },
-  "files": [
-    "dist",
-    "src"
-  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/firecrawl/firecrawl-convex.git"
+  },
+  "license": "MIT",
+  "type": "module",
   "exports": {
     "./package.json": "./package.json",
     ".": {
@@ -66,11 +43,35 @@
       "default": "./dist/component/convex.config.js"
     }
   },
+  "types": "./dist/client/index.d.ts",
+  "files": [
+    "dist",
+    "src"
+  ],
+  "scripts": {
+    "dev": "convex dev --start 'npm run dev:build'",
+    "dev:build": "chokidar 'tsconfig*.json' 'src/**/*.ts' -i '**/*.test.ts' -c 'npm run build:codegen' --initial",
+    "dev:mock": "node example/mock-firecrawl.mjs",
+    "predev": "convex init && npm run build:codegen",
+    "clean": "rm -rf dist *.tsbuildinfo",
+    "build": "tsc --project ./tsconfig.build.json",
+    "build:codegen": "npx convex codegen --component-dir ./src/component && npm run build",
+    "build:clean": "npm run clean && npm run build:codegen",
+    "typecheck": "tsc --noEmit && tsc -p example && tsc -p example/convex",
+    "lint": "eslint .",
+    "test": "vitest run --typecheck",
+    "test:watch": "vitest --typecheck --clearScreen false",
+    "test:coverage": "vitest run --coverage --coverage.reporter=text",
+    "prepare": "npm run build",
+    "preversion": "npm ci && npm run build:clean && npm run test && npm run lint && npm run typecheck",
+    "alpha": "npm version prerelease --preid alpha && npm publish --tag alpha && git push --follow-tags",
+    "release": "npm version patch && npm publish && git push --follow-tags",
+    "version": "(npm whoami || npm login) && vim -c 'normal o' -c 'normal o## '$npm_package_version CHANGELOG.md && prettier -w CHANGELOG.md && git add CHANGELOG.md",
+    "prepublishOnly": "npm run clean && npm run build",
+    "verify": "npm run build && npm run test && npm run typecheck && npm run lint"
+  },
   "dependencies": {
     "convex-helpers": "^0.1.122"
-  },
-  "peerDependencies": {
-    "convex": "^1.43.0"
   },
   "devDependencies": {
     "@convex-dev/eslint-plugin": "^2.0.0",
@@ -87,6 +88,8 @@
     "typescript-eslint": "8.58.2",
     "vitest": "4.1.4"
   },
-  "types": "./dist/client/index.d.ts",
+  "peerDependencies": {
+    "convex": "^1.43.0"
+  },
   "module": "./dist/client/index.js"
 }

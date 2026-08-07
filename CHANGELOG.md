@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.1.1
+
+Packaging fixes. No runtime changes.
+
+- Published as `@firecrawl/firecrawl-convex`, under the `firecrawl` npm org.
+  0.1.0 shipped under that name too, but with the docs and example still
+  referring to the unscoped `firecrawl-convex`.
+- Dropped a bogus `"main": "eslint.config.js"` that npm's rename normalization
+  introduced in 0.1.0. It pointed at a file the package doesn't even ship, and
+  was only ever inert because `exports` takes precedence.
+- README, example app, and `PUBLISHING.md` now use the scoped name throughout.
+
 ## 0.1.0
 
 Initial release.
@@ -11,7 +23,7 @@ Initial release.
   reactive `getCrawl` / `listPages` queries plus an `onComplete` callback.
 - Webhook deliveries verified by `X-Firecrawl-Signature` HMAC and a per-crawl
   token.
-- Typed `FirecrawlClient` for app code, and a `firecrawl-convex/test` helper for
+- Typed `FirecrawlClient` for app code, and a `@firecrawl/firecrawl-convex/test` helper for
   registering the component in `convex-test`.
 - Page documents are budgeted in UTF-8 bytes across every variable-sized field,
   so oversized `metadata`, `json`, `changeTracking`, or `links` can't push a

@@ -74,7 +74,7 @@ npx convex run example:deleteCrawl '{"crawlId":"<crawlId>"}'
 ## Tests
 
 [`convex/example.test.ts`](convex/example.test.ts) shows how an app tests code
-that calls the component: register it with `firecrawl-convex/test`, stub `fetch`,
+that calls the component: register it with `@firecrawl/firecrawl-convex/test`, stub `fetch`,
 sign in with `t.withIdentity(...)`, and drive the scheduler with
 `finishAllScheduledFunctions`. It also covers the authorization rules — anonymous
 callers rejected, one user unable to touch another's crawl. Run from the repo

@@ -1,6 +1,6 @@
 # Firecrawl for Convex
 
-[![npm version](https://badge.fury.io/js/firecrawl-convex.svg)](https://www.npmjs.com/package/firecrawl-convex)
+[![npm version](https://img.shields.io/npm/v/@firecrawl/firecrawl-convex.svg)](https://www.npmjs.com/package/@firecrawl/firecrawl-convex)
 
 Scrape, map, and search the web from Convex functions, and run **durable crawls**
 whose progress and pages live in your Convex database — so your UI subscribes to
@@ -40,7 +40,7 @@ Your client gets live progress through the normal subscription mechanism.
 ## Install
 
 ```sh
-npm install firecrawl-convex
+npm install @firecrawl/firecrawl-convex
 ```
 
 Add the component to your app, wiring the API key through typed component env:
@@ -49,7 +49,7 @@ Add the component to your app, wiring the API key through typed component env:
 // convex/convex.config.ts
 import { defineApp } from "convex/server";
 import { v } from "convex/values";
-import firecrawl from "firecrawl-convex/convex.config";
+import firecrawl from "@firecrawl/firecrawl-convex/convex.config";
 
 const app = defineApp({
   env: {
@@ -93,7 +93,7 @@ checked before any crawl can be read, cancelled, or deleted.
 ```ts
 // convex/web.ts
 import { v } from "convex/values";
-import { FirecrawlClient } from "firecrawl-convex";
+import { FirecrawlClient } from "@firecrawl/firecrawl-convex";
 import { action } from "./_generated/server";
 import { components } from "./_generated/api";
 
@@ -293,7 +293,7 @@ Register the component in your own tests:
 
 ```ts
 import { convexTest } from "convex-test";
-import firecrawl from "firecrawl-convex/test";
+import firecrawl from "@firecrawl/firecrawl-convex/test";
 import schema from "./schema";
 
 const modules = import.meta.glob("./**/*.*s");

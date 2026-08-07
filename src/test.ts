@@ -10,7 +10,7 @@ const modules = import.meta.glob("./component/**/*.ts");
  * can exercise code that calls it.
  *
  * ```ts
- * import firecrawl from "firecrawl-convex/test";
+ * import firecrawl from "@firecrawl/firecrawl-convex/test";
  *
  * const t = convexTest(schema, modules);
  * firecrawl.register(t);

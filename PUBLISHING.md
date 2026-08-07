@@ -1,11 +1,11 @@
 # Publishing
 
-`firecrawl-convex` is published to npm as a public package. Every command below
+`@firecrawl/firecrawl-convex` is published to npm as a public package. Every command below
 exists in `package.json` — if you change one, change the other.
 
 ## Before the first publish
 
-1. `npm login` with an account that can publish `firecrawl-convex`.
+1. `npm login` with an account in the `firecrawl` npm org that can publish `@firecrawl/firecrawl-convex`.
 2. Make sure a Convex deployment is configured (`npx convex dev` once). Codegen
    needs one, and `npm run build:clean` runs codegen.
 3. The repository must be public before submitting to the Convex Components
@@ -25,7 +25,7 @@ Then sanity-check the tarball against a throwaway app, which catches broken
 
 ```sh
 mkdir /tmp/fc-consumer && cd /tmp/fc-consumer
-npm init -y && npm install convex ../path/to/firecrawl-convex-*.tgz
+npm init -y && npm install convex ../path/to/firecrawl-firecrawl-convex-*.tgz
 # add a convex/convex.config.ts that does app.use(firecrawl), then:
 npx convex dev --once
 ```
@@ -77,4 +77,4 @@ git push --follow-tags
 npm run clean && npm run build && npm pack
 ```
 
-Hand someone the `.tgz` and they can `npm install ./firecrawl-convex-x.y.z.tgz`.
+Hand someone the `.tgz` and they can `npm install ./firecrawl-firecrawl-convex-x.y.z.tgz`.
