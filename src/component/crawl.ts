@@ -773,15 +773,12 @@ export const advance = internalMutation({
       updatedAt: now(),
     });
 
-    // More result pages to read: keep going before deciding anything.
-    if (args.nextUrl) {
-      await ctx.scheduler.runAfter(0, internal.crawl.poll, {
-        crawlId: args.crawlId,
-      });
-      return null;
-    }
-
-    if (isTerminal(args.status)) {
+    // Failed/cancelled jobs may keep returning `next` forever. Only a completed
+    // crawl needs its remaining result pages drained before finalization.
+    if (
+      isTerminal(args.status) &&
+      (args.status !== "completed" || !args.nextUrl)
+    ) {
       await finalizeCrawl(ctx, args.crawlId, args.status);
       return null;
     }
@@ -798,8 +795,12 @@ export const advance = internalMutation({
       return null;
     }
 
+    // `next` also means the crawl is still running, even with no new pages.
+    // Drain advancing cursors immediately; back off when the cursor repeats.
     await ctx.scheduler.runAfter(
-      nextDelayMs(crawl.mode, pollAttempt),
+      args.nextUrl && args.nextUrl !== crawl.nextUrl
+        ? 0
+        : nextDelayMs(crawl.mode, pollAttempt),
       internal.crawl.poll,
       { crawlId: args.crawlId },
     );

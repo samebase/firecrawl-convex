@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { api, internal } from "./_generated/api.js";
 import { initConvexTest, mockFetch, TEST_SITE_URL } from "./setup.test.js";
 import { TOKEN_HEADER, _test } from "./crawl.js";
-import type { Id } from "./_generated/dataModel.js";
+import type { Doc, Id } from "./_generated/dataModel.js";
 import { sign } from "./signature.js";
 
 function doc(url: string, markdown = "# page") {
@@ -158,6 +158,172 @@ describe("poll mode", () => {
 
     const crawl = await t.query(api.crawl.get, { crawlId });
     expect(crawl).toMatchObject({ status: "failed", finalized: true });
+  });
+});
+
+describe("poll continuation", () => {
+  const cursor = "https://api.firecrawl.dev/v2/crawl/job-1?skip=1";
+
+  async function trackedCrawl(
+    progress: Pick<Doc<"crawls">, "mode" | "pollAttempt" | "nextUrl">,
+  ) {
+    const t = initConvexTest();
+    const crawlId = await t.run((ctx) =>
+      ctx.db.insert("crawls", {
+        url: "https://a.com",
+        jobId: "job-1",
+        token: "test-token",
+        storeContent: true,
+        status: "scraping",
+        pageCount: 0,
+        finalized: false,
+        startedAt: Date.now(),
+        updatedAt: Date.now(),
+        ...progress,
+      }),
+    );
+    return { t, crawlId };
+  }
+
+  test.each(["failed", "cancelled"] as const)(
+    "finalizes a %s response even when it includes a cursor",
+    async (status) => {
+      const { t, crawlId } = await trackedCrawl({
+        mode: "poll",
+        pollAttempt: 0,
+      });
+      const { calls } = mockFetch([
+        statusResponse({
+          status,
+          next: cursor,
+          total: 0,
+          completed: 0,
+          data: [],
+        }),
+      ]);
+
+      await t.action(internal.crawl.poll, { crawlId });
+      await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+      expect(await t.query(api.crawl.get, { crawlId })).toMatchObject({
+        status,
+        finalized: true,
+      });
+      expect(calls).toHaveLength(1);
+    },
+  );
+
+  test.each([
+    { mode: "poll", delay: 3_200 },
+    { mode: "webhook", delay: 60_000 },
+  ] as const)(
+    "backs off a repeated cursor in $mode mode",
+    async ({ mode, delay }) => {
+      const { t, crawlId } = await trackedCrawl({
+        mode,
+        pollAttempt: 0,
+        nextUrl: cursor,
+      });
+      const { calls } = mockFetch([
+        statusResponse({ status: "scraping", next: cursor, data: [] }),
+        statusResponse(),
+      ]);
+      const polledAt = Date.now();
+
+      await t.action(internal.crawl.poll, { crawlId });
+
+      const scheduled = await t.run((ctx) =>
+        ctx.db.system.query("_scheduled_functions").take(2),
+      );
+      expect(scheduled).toHaveLength(1);
+      expect(scheduled[0]).toMatchObject({
+        scheduledTime: polledAt + delay,
+        state: { kind: "pending" },
+      });
+      expect(calls).toHaveLength(1);
+      await t.finishAllScheduledFunctions(vi.runAllTimers);
+      expect(await t.query(api.crawl.get, { crawlId })).toMatchObject({
+        status: "completed",
+        finalized: true,
+      });
+    },
+  );
+
+  test.each(["scraping", "completed"] as const)(
+    "enforces the poll ceiling on a %s response with more pages",
+    async (status) => {
+      const { t, crawlId } = await trackedCrawl({
+        mode: "poll",
+        pollAttempt: 249,
+      });
+      const { calls } = mockFetch([
+        statusResponse({
+          status,
+          next: cursor,
+          data: [doc("https://a.com/one")],
+        }),
+      ]);
+
+      await t.action(internal.crawl.poll, { crawlId });
+      await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+      const crawl = await t.query(api.crawl.get, { crawlId });
+      expect(crawl).toMatchObject({
+        status: "failed",
+        finalized: true,
+        pageCount: 1,
+      });
+      expect(crawl?.error).toMatch(/250 status checks.*resume/);
+      expect(calls).toHaveLength(1);
+    },
+  );
+
+  test("immediately drains advancing completed cursors before finalizing", async () => {
+    const { t, crawlId } = await trackedCrawl({ mode: "poll", pollAttempt: 0 });
+    const { calls } = mockFetch([
+      statusResponse({ next: cursor, data: [doc("https://a.com/one")] }),
+      statusResponse({ data: [doc("https://a.com/two")] }),
+    ]);
+    const polledAt = Date.now();
+
+    await t.action(internal.crawl.poll, { crawlId });
+
+    expect(await t.query(api.crawl.get, { crawlId })).toMatchObject({
+      status: "completed",
+      finalized: false,
+      pageCount: 1,
+    });
+    const scheduled = await t.run((ctx) =>
+      ctx.db.system.query("_scheduled_functions").take(2),
+    );
+    expect(scheduled).toHaveLength(1);
+    expect(scheduled[0]?.scheduledTime).toBe(polledAt);
+
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+    expect(calls).toHaveLength(2);
+    expect(calls[1]?.url).toBe(cursor);
+    expect(await t.query(api.crawl.get, { crawlId })).toMatchObject({
+      status: "completed",
+      finalized: true,
+      pageCount: 2,
+    });
+  });
+
+  test("accepts a final completed response at the poll ceiling", async () => {
+    const { t, crawlId } = await trackedCrawl({
+      mode: "poll",
+      pollAttempt: 249,
+    });
+    mockFetch([statusResponse()]);
+
+    await t.action(internal.crawl.poll, { crawlId });
+
+    expect(await t.query(api.crawl.get, { crawlId })).toMatchObject({
+      status: "completed",
+      finalized: true,
+      pageCount: 2,
+    });
   });
 });
 
