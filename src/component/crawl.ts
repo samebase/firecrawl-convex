@@ -777,7 +777,7 @@ export const advance = internalMutation({
     // crawl needs its remaining result pages drained before finalization.
     if (
       isTerminal(args.status) &&
-      (args.status !== "completed" || !args.nextUrl)
+      !(args.status === "completed" && args.nextUrl)
     ) {
       await finalizeCrawl(ctx, args.crawlId, args.status);
       return null;
