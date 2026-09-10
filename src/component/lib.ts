@@ -1,3 +1,5 @@
+// Make Convex types nameable when emitting declarations inside pnpm's Git dependency store.
+import type {} from "convex/server";
 import { v } from "convex/values";
 import { action } from "./_generated/server.js";
 import { firecrawlRequest } from "./api.js";
